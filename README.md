@@ -369,14 +369,6 @@ python amp_cpp_pipeline.py
 - [ ] Add secondary structure and amphipathicity scoring as additional biological filters
 - [ ] Benchmark generated candidates against CPPpredictor2, AMPscanner, and CAMPR3 external tools
 
----
-
-## Citation
-
-If you use this pipeline in your research, please cite the input databases:
-
-- **AMP dataset:** ADP6 — Antimicrobial Peptide Database
-- **CPP dataset:** CellPPD — Raghavendra et al.
 
 ---
 
