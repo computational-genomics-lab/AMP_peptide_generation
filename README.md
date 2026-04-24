@@ -1,375 +1,215 @@
-# 🧬 ML-Guided Generation of Antimicrobial Peptides with Cell-Penetrating Activity
+# AMP+CPP Peptide Generation Pipeline
 
-> A fully self-contained, NumPy/scikit-learn pipeline that learns the sequence grammar of antimicrobial peptides (AMPs), predicts cell-penetrating peptide (CPP) activity, and generates novel dual-function candidates — no deep learning framework required.
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Background](#background)
-- [Pipeline Architecture](#pipeline-architecture)
-- [Dataset Description](#dataset-description)
-- [Methodology](#methodology)
-  - [Phase 1 — Data Preparation](#phase-1--data-preparation)
-  - [Phase 2 — CPP Predictor](#phase-2--cpp-predictor)
-  - [Phase 3 — AMP Predictor](#phase-3--amp-predictor)
-  - [Phase 4 — CVAE Generator](#phase-4--cvae-generator)
-  - [Phase 5 — Multi-Objective Optimisation](#phase-5--multi-objective-optimisation)
-  - [Phase 6 — Biological Hard Filters](#phase-6--biological-hard-filters)
-  - [Phase 7 — Secondary Validation](#phase-7--secondary-validation)
-  - [Phase 8 — Diversity Control](#phase-8--diversity-control)
-  - [Phase 9 — Final Output](#phase-9--final-output)
-- [Physicochemical Descriptors](#physicochemical-descriptors)
-- [Results](#results)
-- [Requirements](#requirements)
-- [Usage](#usage)
-- [Output Files](#output-files)
-- [Limitations & Future Work](#limitations--future-work)
-- [Citation](#citation)
+ML-guided generation of antimicrobial peptides (AMPs) with cell-penetrating
+peptide (CPP) activity. Refactored from scratch for scientific validity,
+production robustness, and reproducibility.
 
 ---
 
-## Overview
-
-This project addresses a key challenge in peptide drug discovery: finding sequences that are simultaneously **antimicrobial** and **cell-penetrating**. AMPs kill or inhibit pathogens, while CPPs carry cargo across cell membranes — combining both functions in a single short peptide is rare and experimentally expensive to discover.
-
-This pipeline automates that search using:
-
-- Supervised classifiers trained on curated AMP and CPP datasets
-- A Conditional Variational Autoencoder (CVAE) to learn and sample the AMP sequence distribution
-- Multi-objective scoring and iterative mutation to push candidates toward dual-function space
-- Physicochemical and biological hard filters to ensure experimental plausibility
-- Diversity-enforced final shortlisting for cost-effective experimental follow-up
-
----
-
-## Background
-
-**Antimicrobial peptides (AMPs)** are short peptides (typically 5–60 amino acids) produced by virtually all living organisms as part of innate immunity. They disrupt microbial membranes and are considered promising candidates against drug-resistant pathogens.
-
-**Cell-penetrating peptides (CPPs)** are peptides capable of crossing lipid bilayers and entering cells, either by endocytosis or direct translocation. They are widely used as drug delivery vectors.
-
-A peptide that combines both properties could act as a self-delivering antimicrobial — entering infected cells and killing intracellular pathogens — which is a highly sought-after property in next-generation antibiotic development.
-
----
-
-## Pipeline Architecture
+## Project structure
 
 ```
-  ┌──────────────────────────────────────────────────────────────┐
-  │                     INPUT DATASETS                           │
-  │    AMP dataset (1,527 sequences)  +  CPP dataset (704 seqs)  │
-  └────────────────────────┬─────────────────────────────────────┘
-                           │
-              ┌────────────▼────────────┐
-              │   Phase 1: Data Prep    │  Clean · Deduplicate · Descriptors
-              └────────────┬────────────┘
-               ┌───────────┴───────────┐
-               ▼                       ▼
-  ┌────────────────────┐   ┌────────────────────┐
-  │  Phase 2: CPP      │   │  Phase 3: AMP      │
-  │  Predictor         │   │  Predictor         │
-  │  GBM + MLP         │   │  GBM + MLP + RF    │
-  │  AUC ≈ 0.83        │   │  AUC ≈ 0.91        │
-  └────────────┬───────┘   └────────────┬───────┘
-               │                        │
-               │           ┌────────────▼───────────┐
-               │           │   Phase 4: CVAE        │
-               │           │   Train on AMP seqs    │
-               │           │   NumPy VAE, latent=32 │
-               │           └────────────┬───────────┘
-               │                        │
-               └───────────┬────────────┘
-                           ▼
-          ┌────────────────────────────────┐
-          │   Phase 5: Multi-Obj. Optimise │
-          │   Generate 2000 → Score →      │
-          │   Mutate Top-200 × 3 rounds    │
-          └────────────────┬───────────────┘
-                           │
-          ┌────────────────▼───────────────┐
-          │   Phase 6: Biological Filters  │
-          │   Length · Charge · GRAVY ·    │
-          │   Instability · Score cutoffs  │
-          └────────────────┬───────────────┘
-                           │
-          ┌────────────────▼───────────────┐
-          │   Phase 7: Secondary Validation│
-          │   CPP predictor as tie-breaker │
-          └────────────────┬───────────────┘
-                           │
-          ┌────────────────▼───────────────┐
-          │   Phase 8: Diversity Control   │
-          │   KMeans clustering · top-k    │
-          │   per cluster                  │
-          └────────────────┬───────────────┘
-                           │
-          ┌────────────────▼───────────────┐
-          │   Phase 9: Final Output        │
-          │   Ranked CSV + Report TXT      │
-          └────────────────────────────────┘
+amp_cpp_pipeline/
+├── config.yaml                  # All thresholds and paths — edit this
+├── main.py                      # Entry point
+├── requirements.txt
+│
+├── data/
+│   └── loader.py                # Data loading, cleaning, train/val/test split
+│
+├── features/
+│   ├── physicochemical.py       # pKa-based charge, DIWV instability, hydrophobic moment
+│   ├── transformers.py          # sklearn-compatible feature transformers (leak-free)
+│   ├── esm_embeddings.py        # Optional ESM-2 embeddings
+│   └── feature_factory.py       # Selects correct transformer from config
+│
+├── models/
+│   ├── classifier.py            # Ensemble GBM+MLP+RF with correct calibration
+│   ├── cvae_torch.py            # PyTorch CVAE (preferred backend)
+│   └── cvae_numpy.py            # NumPy CVAE fallback
+│
+├── training/
+│   ├── train.py                 # Training orchestration
+│   └── evaluate.py              # Score distributions, novelty metrics
+│
+├── generation/
+│   └── pipeline.py              # Score-guided mutation + softmax sampling
+│
+├── filters/
+│   └── biological.py            # Configurable biological hard filters
+│
+├── diversity/
+│   └── cluster.py               # Edit-distance + physicochemical diversity
+│
+└── utils/
+    └── logging_utils.py         # Logging setup, config loader
 ```
 
 ---
 
-## Dataset Description
+## Setup
 
-| Dataset | Source | Raw Sequences | After Cleaning |
-|---------|--------|:-------------:|:--------------:|
-| AMP | ADP6 database (disulfide-bond-containing AMPs) | 1,655 | 1,527 |
-| CPP | CellPPD (Raghavendra et al.) | 708 | 704 |
-
-Both datasets were pre-annotated with physicochemical descriptors. The pipeline recomputes all descriptors from scratch for any newly generated sequence.
-
-The CPP dataset label distribution: **633 CPP-positive** / **71 CPP-negative**. The imbalance is addressed by augmenting the negative class with shuffled CPP sequences.
-
----
-
-## Methodology
-
-### Phase 1 — Data Preparation
-
-- Strip non-standard characters, uppercase all sequences
-- Remove sequences containing non-canonical amino acids (anything outside `ACDEFGHIKLMNPQRSTVWY`)
-- Remove duplicate sequences
-- Enforce length range: **5–60 amino acids**
-- Compute all 9 physicochemical descriptors from first principles for every sequence
-
-### Phase 2 — CPP Predictor
-
-**Representation:** k-mer (trigram) TF-IDF → 50-component TruncatedSVD, concatenated with 9 physicochemical descriptors (59 features total).
-
-**Negative class construction:**
-- Original 71 Non-CPP sequences retained
-- 562 additional synthetic negatives generated by randomly shuffling positive CPP sequences (preserves amino acid composition, destroys positional patterns)
-
-**Model:** Calibrated ensemble of:
-- `GradientBoostingClassifier` (200 estimators, lr=0.08, max_depth=4)
-- `MLPClassifier` (128→64, ReLU, early stopping)
-
-Both models calibrated with isotonic regression via `CalibratedClassifierCV`.
-
-**Evaluation:** 5-fold stratified cross-validation → **ROC-AUC ≈ 0.83**
-
-Final CPP score = average of both calibrated probability outputs.
-
-### Phase 3 — AMP Predictor
-
-Same representation strategy with a slightly wider SVD (64 components → 73 features total).
-
-**Negative class:** All 1,527 AMP sequences shuffled to generate composition-matched negatives.
-
-**Model:** Three-model calibrated ensemble:
-- `GradientBoostingClassifier` (300 estimators)
-- `MLPClassifier` (128→64→32, ReLU)
-- `RandomForestClassifier` (200 trees)
-
-**Evaluation:** 5-fold stratified cross-validation → **ROC-AUC ≈ 0.91**
-
-Final AMP score = mean of three calibrated probability outputs.
-
-### Phase 4 — CVAE Generator
-
-A Variational Autoencoder implemented in **pure NumPy** (no PyTorch or TensorFlow).
-
-**Architecture:**
-
-```
-Encoder:  x (900-dim one-hot, max_len=45 × 20 AAs)
-           → Dense(128, ReLU)
-           → μ (32-dim),  log σ² (32-dim)
-
-Decoder:  z ~ N(μ, σ²)   [reparameterisation trick]
-           → Dense(128, ReLU)
-           → Dense(900)
-           → Per-position Softmax (45 positions × 20 AAs)
-```
-
-**Training details:**
-- Loss: Reconstruction (cross-entropy) + β × KL divergence (β = 0.4)
-- Optimiser: Adam (lr = 5×10⁻⁴, β₁=0.9, β₂=0.999)
-- Gradient clipping: ±5.0
-- Batch size: 64, Epochs: 100
-- Weights initialised with He initialisation
-
-**Generation:** Sample z ~ N(0, I), decode with temperature scaling (T=1.1 for diversity), sample per-position categorical distribution.
-
-### Phase 5 — Multi-Objective Optimisation
-
-1. Generate **2,000 candidate sequences** from the CVAE
-2. Score every candidate with both predictors
-3. Rank by **geometric mean**: `√(AMP_score × CPP_score)`
-4. Select top-200 candidates as seed sequences
-5. Run **3 rounds of iterative point mutation** (1–2 mutations per sequence per round), scoring all mutants
-6. Pool all scored sequences → deduplicate → sort by combined score
-
-Geometric mean is used instead of arithmetic mean to require *both* scores to be high simultaneously (a sequence scoring 0.95/0.05 is penalised more than 0.5/0.5).
-
-### Phase 6 — Biological Hard Filters
-
-| Filter | Criterion | Rationale |
-|--------|-----------|-----------|
-| Length | 6–55 AA | Practical synthesis range |
-| Net charge (pH 7) | ≥ 0 | CPPs and AMPs are typically cationic |
-| GRAVY score | ≤ 3.0 | Prevent insoluble / membrane-trapped peptides |
-| Instability index | ≤ 80 | Exclude highly unstable sequences |
-| AMP score | ≥ 0.40 | Minimum antimicrobial credibility |
-| CPP score | ≥ 0.40 | Minimum cell-penetrating credibility |
-
-Filters are applied sequentially. If no sequences pass, constraints are relaxed once automatically.
-
-### Phase 7 — Secondary Validation
-
-The CPP predictor is re-applied to all passing sequences as an independent sanity check. The final CPP score for each candidate is the average of its Phase 5 score and this re-score, reducing prediction noise.
-
-### Phase 8 — Diversity Control
-
-- Compute physicochemical feature matrix for all passing sequences
-- Apply **KMeans clustering** (up to 20 clusters)
-- Retain the **top-4 highest-scoring sequences per cluster**
-- This prevents the final list from being dominated by near-identical mutants of a single sequence
-
-### Phase 9 — Final Output
-
-Ranked shortlist exported with all annotations:
-
-| Column | Description |
-|--------|-------------|
-| `rank` | Final combined-score rank |
-| `sequence` | Peptide sequence (single-letter AA code) |
-| `amp_score` | Calibrated AMP probability [0–1] |
-| `cpp_score` | Calibrated CPP probability [0–1] |
-| `combined_score` | √(amp × cpp) |
-| `cluster` | Diversity cluster ID |
-| `length` | Sequence length (AA) |
-| `molecular_weight` | Da |
-| `pI` | Isoelectric point |
-| `instability_index` | Guruprasad instability |
-| `GRAVY` | Grand average of hydropathicity |
-| `aromaticity` | Fraction of F, W, Y residues |
-| `aliphatic_index` | Relative volume of aliphatic side chains |
-| `boman_index` | Protein–protein interaction potential |
-| `ww_hydrophobicity` | Wimley–White interfacial hydrophobicity |
-
----
-
-## Physicochemical Descriptors
-
-All nine descriptors are computed from scratch using established bioinformatics scales:
-
-| Descriptor | Scale / Method |
-|------------|----------------|
-| Molecular weight | Residue MW table minus water per peptide bond |
-| Isoelectric point (pI) | Binary search over Henderson-Hasselbalch equation |
-| Instability index | Heuristic based on charged residue composition |
-| GRAVY | Kyte & Doolittle (1982) hydrophobicity scale |
-| Aromaticity | Fraction of F, W, Y |
-| Aliphatic index | Ikai (1980): A + 2.9V + 3.9(I+L) |
-| Boman index | Boman (2003) interaction energy scale |
-| Wimley-White hydrophobicity | Wimley & White (1996) interfacial scale |
-| Net charge | Henderson-Hasselbalch at pH 7.0 |
-
----
-
-## Results
-
-Pipeline run on the full datasets produced **25 diverse dual-function candidates** distributed across **12 physicochemical clusters**.
-
-| Metric | Value |
-|--------|-------|
-| Total candidates generated | 3,169 |
-| Passed biological filters | 25 |
-| Diversity clusters | 12 |
-| Mean AMP score (final) | 0.490 |
-| Mean CPP score (final) | 0.425 |
-| Mean combined score (final) | 0.455 |
-| Top combined score | **0.549** |
-
-**Top 5 candidates:**
-
-| Rank | Sequence | AMP | CPP | Combined | pI | Charge |
-|------|----------|:---:|:---:|:--------:|:--:|:------:|
-| 1 | `GGLKKVVGTTKAKEFTVGFCVFSCGIVQQGKRLGCRTRGLKKVHQ` | 0.702 | 0.429 | 0.549 | 10.92 | +9.1 |
-| 2 | `GGLKKVVGTTKSKGFTVGFCVFSFGISQQGVRLGCRTRGLKKVHQ` | 0.557 | 0.432 | 0.490 | 11.68 | +9.1 |
-| 3 | `QWCAPVSGENCSRYGGLFLSSTHTADLQRCAGIFGKNWVPHAPCY` | 0.597 | 0.402 | 0.490 | 7.71 | +1.2 |
-| 4 | `LFDALGAGTCVAKSVHCAITYFTYSCTKTQIYSPTCSVWCRFQLM` | 0.583 | 0.405 | 0.485 | 7.99 | +2.1 |
-| 5 | `GLFGCSQSRIVNGIEKLLSKTTTPCGEIFVTKIWVQGIHCHHDEC` | 0.557 | 0.421 | 0.484 | 7.02 | +0.3 |
-
----
-
-## Requirements
-
-```
-python >= 3.9
-numpy
-pandas
-scipy
-scikit-learn
-openpyxl       # for reading .xlsx input
-```
-
-Install all dependencies:
+### 1. Conda environment (recommended)
 
 ```bash
-pip install numpy pandas scipy scikit-learn openpyxl
+conda create -n amp_cpp python=3.10 -y
+conda activate amp_cpp
+pip install -r requirements.txt
 ```
 
-No GPU required. No internet connection required at runtime.
-
----
-
-## Usage
-
-1. Clone the repository and place your input files in the working directory:
-
-```
-amp_cpp_pipeline.py
-actual_antimicrobial_peptide_list_ADP6_25feb_-_sequences_containing_more_that_one_C_contains_disulfide_bond.xlsx
-Cell_Penetrating_Peptides_List_CellPPD_Raghavendra.csv
-```
-
-2. Update the file paths in `phase1_load_and_clean()` if needed (lines ~200–220).
-
-3. Run the pipeline:
+### 2. PyTorch (CPU) — optional but strongly recommended for CVAE
 
 ```bash
-python amp_cpp_pipeline.py
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-4. Outputs are written to `/mnt/user-data/outputs/` by default. Change `out_dir` in `phase9_final_output()` to redirect.
+### 3. ESM-2 embeddings — optional, highest quality features
 
-**Expected runtime:** ~10–20 minutes on a standard laptop CPU (dominated by GBM cross-validation and CVAE training).
-
----
-
-## Output Files
-
-| File | Description |
-|------|-------------|
-| `amp_cpp_candidates.csv` | Full ranked candidate table with all scores and descriptors |
-| `amp_cpp_report.txt` | Human-readable summary report with top-10 table |
+```bash
+pip install fair-esm
+# Weights (~700MB) download automatically on first run
+```
 
 ---
 
-## Limitations & Future Work
+## Data requirements
 
-**Current limitations:**
+### AMP positives (provided)
+Your `actual_antimicrobial_peptide_list_ADP6_*.xlsx` file.
+Set `data.amp_pos_path` in `config.yaml`.
 
-- The CVAE is implemented in pure NumPy. Without a proper deep learning framework, KL divergence annealing and posterior collapse prevention are harder to tune. With PyTorch or JAX, a more stable training loop with KL warm-up would significantly improve generation quality.
-- The CPP predictor is trained on a relatively small and imbalanced dataset (633 positives, 71 natural negatives). A larger, more balanced CPP dataset would improve predictor confidence.
-- Sequence representation relies on trigram k-mers + physicochemical features. Protein language model embeddings (e.g. ESM-2) would capture evolutionary and structural context that k-mers cannot.
-- All generated sequences are 45 AA (padded to max training length). A length-conditional generation strategy would produce more diverse length distributions.
+### AMP negatives (REQUIRED — you must obtain this)
 
-**Planned upgrades:**
+The pipeline **will not generate synthetic negatives**. You must supply
+real non-AMP sequences. Recommended sources:
 
-- [ ] Replace NumPy VAE with PyTorch CVAE with KL annealing and teacher forcing
-- [ ] Integrate ESM-2 or ProtT5 embeddings as the primary sequence representation
-- [ ] Add REINFORCE or PPO-based reinforcement learning on top of the generator to directly optimise the dual-function objective
-- [ ] Add secondary structure and amphipathicity scoring as additional biological filters
-- [ ] Benchmark generated candidates against CPPpredictor2, AMPscanner, and CAMPR3 external tools
+**Option A — UniProt cytosolic proteins (best)**
+```bash
+# Download non-secretory, non-AMP reviewed human proteins 5-60 AA
+curl "https://rest.uniprot.org/uniprotkb/search?\
+query=reviewed:true+AND+length:[5+TO+60]\
++AND+NOT+keyword:KW-0929+AND+cc_subcellular_location:cytoplasm\
+&format=fasta&size=5000" \
+  > uniprot_cytosolic_negatives.fasta
 
+# Convert FASTA to CSV (one column 'Sequence')
+python - << 'EOF'
+from Bio import SeqIO
+import pandas as pd
+seqs = [str(r.seq) for r in SeqIO.parse("uniprot_cytosolic_negatives.fasta", "fasta")]
+pd.DataFrame({'Sequence': seqs}).to_csv("amp_negatives.csv", index=False)
+EOF
+```
+
+**Option B — APD3 non-AMP peptides**
+Download from https://aps.unmc.edu/AP/main.php (Negative dataset tab).
+
+Set `data.amp_neg_path` in `config.yaml` to your negatives CSV path.
+
+### CPP dataset (provided)
+Your `Cell_Penetrating_Peptides_List_CellPPD_*.csv` file already contains
+both CPP and Non-CPP rows. No separate negative file needed.
+Set `data.cpp_path` in `config.yaml`.
 
 ---
 
-*Built with NumPy, SciPy, and scikit-learn. No proprietary dependencies.*
+## Configuration
+
+Edit `config.yaml` before running. Key settings:
+
+```yaml
+data:
+  amp_pos_path: /absolute/path/to/amp_positives.xlsx
+  amp_neg_path: /absolute/path/to/amp_negatives.csv
+  cpp_path:     /absolute/path/to/cpp_dataset.csv
+
+features:
+  use_esm: false          # set true if fair-esm is installed
+
+generator:
+  backend: torch          # torch | numpy
+  epochs: 150
+  kl_warmup_epochs: 60    # KL annealing warmup
+
+filters:
+  min_net_charge: 1.0
+  min_amp_score: 0.50
+  min_cpp_score: 0.50
+```
+
+---
+
+## Running
+
+```bash
+cd amp_cpp_pipeline
+
+# Basic run
+python main.py --config config.yaml
+
+# Override config values at CLI
+python main.py --config config.yaml --set generator.epochs=200 --set filters.min_amp_score=0.60
+
+# Specify absolute data paths at CLI (no need to edit config.yaml)
+python main.py --config config.yaml \
+  --set data.amp_pos_path=/data/amp.xlsx \
+  --set data.amp_neg_path=/data/negatives.csv \
+  --set data.cpp_path=/data/cpp.csv
+```
+
+Outputs are written to `outputs/<timestamp>/`:
+```
+outputs/20250101_120000/
+├── config_used.yaml        # exact config used (reproducibility)
+├── candidates.csv          # ranked final peptide candidates
+├── amp_metrics.json        # AMP classifier metrics (CV + val + test)
+├── cpp_metrics.json        # CPP classifier metrics (CV + val + test)
+├── score_comparison.csv    # generated vs. training vs. random scores
+├── novelty_report.json     # edit-distance novelty statistics
+└── report.txt              # human-readable summary
+```
+
+---
+
+## What was fixed and why
+
+| Issue | Original | Fixed |
+|---|---|---|
+| Synthetic negatives | Shuffled positive sequences | Requires real validated negatives |
+| Data leakage | TF-IDF/SVD fit before CV | All transformers inside sklearn Pipeline |
+| Calibration | On training data | On held-out validation set only |
+| No test set | Only CV | Stratified train/val/test split |
+| CVAE KL annealing | Missing | Linear β schedule over warmup epochs |
+| Padding masking | Missing | Loss masked to real positions only |
+| Sequence truncation | `.rstrip('A')` | Explicit length conditioning |
+| Instability index | Charged-ratio heuristic | Guruprasad 1990 DIWV formula |
+| Net charge | K+R+H count | Full pKa Henderson-Hasselbalch |
+| Mutation strategy | Uniform random | Softmax-weighted seed selection |
+| Diversity control | Physicochemical only | Edit distance + clustering |
+| Evaluation | None | Score distributions + novelty metrics |
+| Hardcoded paths | Yes | config.yaml + CLI overrides |
+| Logging | print() statements | Python logging with file handler |
+| Reproducibility | Partial | Central seed, versioned outputs |
+| Aggregation filter | Missing | Max consecutive hydrophobic run |
+| Amphipathicity filter | Missing | Eisenberg hydrophobic moment |
+
+---
+
+## Extending the pipeline
+
+### Adding a toxicity filter
+1. Install a toxicity prediction tool (e.g., ToxinPred or CAMPR3 API)
+2. Add a `predict_toxicity(seqs) -> np.ndarray` function
+3. Add threshold to `FilterConfig` in `filters/biological.py`
+4. Call it in `_passes_filters()`
+
+### Switching to autoregressive generation
+Replace `MLPDecoder` in `models/cvae_torch.py` with an LSTM decoder and
+implement teacher forcing in the training loop. The `generate_sequences()`
+function would then run beam search or greedy sampling token-by-token.
+
+### Using a different classifier
+The `train_predictor()` function in `models/classifier.py` accepts any
+sklearn-compatible estimator. Replace `_make_gbm()` / `_make_mlp()` with
+your preferred model and it will automatically be wrapped in the leak-free
+Pipeline.
