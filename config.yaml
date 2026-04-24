@@ -1,0 +1,121 @@
+# =============================================================================
+# AMP+CPP Pipeline Configuration
+# All thresholds, paths, and hyperparameters live here.
+# Override any value via CLI: --set key=value
+# =============================================================================
+
+seed: 42
+
+# ---------------------------------------------------------------------------
+# Data paths  (replace with absolute paths to your files)
+# ---------------------------------------------------------------------------
+data:
+  # Positive AMP sequences (xlsx with 'SeqID', 'Sequence' columns)
+  amp_pos_path: /path/to/positive/AMP/dataset
+  # Real non-AMP negatives from UniProt cytosolic/non-secretory proteins
+  # Expected columns: 'Sequence'  (label inferred as 0)
+  amp_neg_path: /path/to/negative/AMP/dataset
+  # CPP dataset — CellPPD format (ALL rows are experimentally validated CPPs)
+  # The predictor-output columns in this file are ignored.
+  cpp_path: /path/to/positive/CPP/dataset
+  # Real non-CPP negatives — REQUIRED (same reasoning as amp_neg_path).
+  # The CellPPD predictor output is NOT usable as a negative label source.
+  # Recommended: CPPsite 2.0 non-CPP set (https://crdd.osdd.net/raghava/cppsite/)
+  cpp_neg_path: /path/to/negative/CPP/dataset
+
+  # Sequence quality filters
+  min_len: 5
+  max_len: 60
+  canonical_only: true
+
+  # Split fractions (train / val / test)
+  val_frac: 0.15
+  test_frac: 0.15
+
+# ---------------------------------------------------------------------------
+# Feature engineering
+# ---------------------------------------------------------------------------
+features:
+  kmer_k: 3
+  kmer_max_features: 5000
+  svd_components: 64
+
+  # Set true only if ESM-2 weights are available locally
+  # Requires: pip install fair-esm torch
+  # Model weights downloaded automatically on first run (~700MB)
+  use_esm: false
+  esm_model: esm2_t6_8M_UR50D   # smallest ESM-2; change to esm2_t33_650M_UR50D for best quality
+  esm_layer: 6                   # which transformer layer to extract from
+
+# ---------------------------------------------------------------------------
+# Classifier training
+# ---------------------------------------------------------------------------
+model:
+  cv_folds: 5
+  # Calibration is performed on the VALIDATION split, not training data
+  calibration_method: isotonic  # isotonic | sigmoid
+  # class_weight='balanced' used instead of synthetic negatives
+  use_class_weight: true
+
+# ---------------------------------------------------------------------------
+# CVAE generator
+# ---------------------------------------------------------------------------
+generator:
+  backend: torch            # torch | numpy  (torch strongly preferred)
+  max_len: 50               # set dynamically to 90th-percentile of training lengths
+  latent_dim: 64
+  hidden_dim: 256
+  encoder_type: cnn         # cnn | mlp
+  epochs: 150
+  batch_size: 64
+  lr: 1.0e-3
+  grad_clip: 5.0
+  # KL annealing: beta linearly increases from 0 → kl_beta over kl_warmup_epochs
+  kl_beta: 1.0
+  kl_warmup_epochs: 60
+  # Checkpointing
+  checkpoint_dir: checkpoints/cvae
+  checkpoint_every: 25       # epochs between checkpoints
+  resume_from: null          # path to .pt checkpoint, or null
+
+# ---------------------------------------------------------------------------
+# Sequence generation and optimisation
+# ---------------------------------------------------------------------------
+generation:
+  n_initial: 3000
+  temperature: 1.1
+  n_optimise_rounds: 5
+  top_k: 300                 # top-K seed sequences for mutation each round
+  # Mutation: guided by score-softmax sampling, not purely random
+  mutation_ns: [1, 2, 3]    # number of substitutions to try per seed
+  softmax_temperature: 0.3   # lower = more exploitation; higher = more exploration
+
+# ---------------------------------------------------------------------------
+# Biological hard filters
+# ---------------------------------------------------------------------------
+filters:
+  min_len: 8
+  max_len: 50
+  min_net_charge: 1.0        # net charge at pH 7.4 using pKa-based computation
+  max_gravy: 2.5
+  min_amp_score: 0.50
+  min_cpp_score: 0.50
+  max_aggregation_window: 5  # max consecutive hydrophobic residues (aggregation proxy)
+  min_hydrophobic_moment: 0.0
+  # Set to null to disable toxicity filter (requires external tool)
+  toxicity_threshold: null
+
+# ---------------------------------------------------------------------------
+# Diversity control
+# ---------------------------------------------------------------------------
+diversity:
+  n_clusters: 20
+  top_per_cluster: 4
+  max_pairwise_identity: 0.80   # sequences above this identity are considered redundant
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+output:
+  dir: outputs/
+  versioned: true             # append timestamp to output dir
